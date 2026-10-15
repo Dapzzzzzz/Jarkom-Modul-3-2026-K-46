@@ -38,15 +38,6 @@ CHANGE MASTER TO
 START SLAVE;
 EOF
 
-    # Autostart
-    if [ ! -f /root/init.sh ]; then
-        echo '#!/bin/sh' > /root/init.sh
-    fi
-    if ! grep -qF 'service mariadb start' /root/init.sh; then
-        echo 'service mariadb start >> /root/soal_13.log 2>&1' >> /root/init.sh
-    fi
-    chmod 755 /root/init.sh
-
     # Tunggu IO thread terhubung ke master (maks. 60 detik)
     for i in $(seq 1 30); do
         if mysql -e "SHOW SLAVE STATUS\G" | grep -q 'Slave_IO_Running: Yes'; then

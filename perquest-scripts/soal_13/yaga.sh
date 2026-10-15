@@ -51,15 +51,6 @@ GRANT ALL PRIVILEGES ON db_shibuya_K46.* TO 'shibuya'@'192.234.4.%';
 FLUSH PRIVILEGES;
 EOF
 
-# Autostart
-if [ ! -f /root/init.sh ]; then
-    echo '#!/bin/sh' > /root/init.sh
-fi
-if ! grep -qF 'service mariadb start' /root/init.sh; then
-    echo 'service mariadb start >> /root/soal_13.log 2>&1' >> /root/init.sh
-fi
-chmod 755 /root/init.sh
-
 # Bukti
 mysql -e "SHOW VARIABLES WHERE Variable_name IN ('server_id','log_bin','bind_address');"
 mysql -e "SHOW MASTER STATUS;"

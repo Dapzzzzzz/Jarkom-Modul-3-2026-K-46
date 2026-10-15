@@ -1,9 +1,10 @@
 #!/bin/sh
-# Soal 4 - tengen: dua pool Network 2 berdasarkan MAC (DHCP class).
-# Pool 1 .2.10-.2.35 (itadori, fushiguro); Pool 2 .2.70-.2.95 (zenin, okkotsu); .2.36-.2.69 tidak dialokasikan.
-# Config ini kumulatif: jalankan setelah soal 2.
-# Simpan di /root/soal_4.sh lalu jalankan: sh /root/soal_4.sh
+# Soal 4
+#   - tengen: dua pool Network 2 berdasarkan MAC (DHCP class).
+#   - Pool 1 .2.10-.2.35 (itadori, fushiguro); Pool 2 .2.70-.2.95 (zenin, okkotsu); .2.36-.2.69 tidak dialokasikan.
+#   - Config ini kumulatif: jalankan setelah soal 2.
 
+# Backup config lama, lalu tulis dhcpd.conf baru
 cp /etc/dhcp/dhcpd.conf /etc/dhcp/dhcpd.conf.bak 2>/dev/null
 cat > /etc/dhcp/dhcpd.conf <<'EOF'
 authoritative;
@@ -49,8 +50,14 @@ subnet 192.234.3.0 netmask 255.255.255.0 {
 }
 EOF
 
-# Validasi, lalu restart
-dhcpd -4 -t -cf /etc/dhcp/dhcpd.conf || { cp /etc/dhcp/dhcpd.conf.bak /etc/dhcp/dhcpd.conf; echo "Config salah, dikembalikan"; exit 1; }
+# Validasi; kembalikan backup jika config salah
+if ! dhcpd -4 -t -cf /etc/dhcp/dhcpd.conf; then
+    cp /etc/dhcp/dhcpd.conf.bak /etc/dhcp/dhcpd.conf
+    echo "ERR: config salah, dikembalikan"
+    exit 1
+fi
+
+# Restart DHCP server
 service isc-dhcp-server restart
 sleep 1
 service isc-dhcp-server status

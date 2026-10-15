@@ -1,8 +1,10 @@
 #!/bin/sh
-# Soal 5 - tengen: Network 3 short lease 1800s (ino, kusakabe; .3.10-.3.89), long lease 43200s
-# (miwa; .3.100-.3.199), DNS 192.234.1.2/.1.3, domain-search K46.com. Kumulatif: jalankan setelah soal 4.
-# Simpan di /root/soal_5.sh lalu jalankan: sh /root/soal_5.sh
+# Soal 5
+#   - tengen: Network 3 short lease 1800s (ino, kusakabe; .3.10-.3.89), long lease 43200s
+#     (miwa; .3.100-.3.199), DNS 192.234.1.2/.1.3, domain-search K46.com.
+#   - Config ini kumulatif: jalankan setelah soal 4.
 
+# Backup config lama, lalu tulis dhcpd.conf baru
 cp /etc/dhcp/dhcpd.conf /etc/dhcp/dhcpd.conf.bak 2>/dev/null
 cat > /etc/dhcp/dhcpd.conf <<'EOF'
 authoritative;
@@ -74,8 +76,14 @@ subnet 192.234.3.0 netmask 255.255.255.0 {
 }
 EOF
 
-# Validasi, lalu restart
-dhcpd -4 -t -cf /etc/dhcp/dhcpd.conf || { cp /etc/dhcp/dhcpd.conf.bak /etc/dhcp/dhcpd.conf; echo "Config salah, dikembalikan"; exit 1; }
+# Validasi; kembalikan backup jika config salah
+if ! dhcpd -4 -t -cf /etc/dhcp/dhcpd.conf; then
+    cp /etc/dhcp/dhcpd.conf.bak /etc/dhcp/dhcpd.conf
+    echo "ERR: config salah, dikembalikan"
+    exit 1
+fi
+
+# Restart DHCP server
 service isc-dhcp-server restart
 sleep 1
 service isc-dhcp-server status

@@ -1,6 +1,8 @@
 #!/bin/sh
-# Soal 5 - miwa (Divisi B long lease (3.100-3.199)): client DHCP biasa.
-# Simpan di /root/soal_5.sh lalu jalankan: sh /root/soal_5.sh
+# Soal 5
+#   - miwa (Divisi B long lease (3.100-3.199)): client DHCP biasa.
+
+# eth0 memakai DHCP
 cat > /etc/network/interfaces <<'EOF'
 auto lo
 iface lo inet loopback

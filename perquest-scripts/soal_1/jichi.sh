@@ -1,13 +1,16 @@
 #!/bin/sh
-# Soal 1 - jichi: eth0 WAN (DHCP dari NAT), eth1-eth4 gateway Network 1-4,
-# IPv4 forwarding dan source NAT.
-# Simpan di /root/soal_1.sh lalu jalankan: sh /root/soal_1.sh
+# Soal 1
+#   - jichi: eth0 WAN (DHCP dari NAT), eth1-eth4 gateway Network 1-4,
+#     IPv4 forwarding dan source NAT.
+
 cat > /etc/network/interfaces <<'EOF'
 auto lo
 iface lo inet loopback
 
 auto eth0
 iface eth0 inet dhcp
+    up sysctl -w net.ipv4.ip_forward=1
+    up iptables -t nat -C POSTROUTING -s 192.234.0.0/16 -o eth0 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 192.234.0.0/16 -o eth0 -j MASQUERADE
 
 auto eth1
 iface eth1 inet static
@@ -30,6 +33,7 @@ iface eth4 inet static
     netmask 255.255.255.0
 EOF
 
+# Terapkan sekarang ke eth1-eth4
 for N in 1 2 3 4; do
     ip addr flush dev eth$N
     ip addr add 192.234.$N.1/24 dev eth$N
@@ -38,13 +42,9 @@ done
 
 # IPv4 forwarding + source NAT lewat eth0 (WAN)
 sysctl -w net.ipv4.ip_forward=1
-iptables -t nat -C POSTROUTING -s 192.234.0.0/16 -o eth0 -j MASQUERADE 2>/dev/null ||
+if ! iptables -t nat -C POSTROUTING -s 192.234.0.0/16 -o eth0 -j MASQUERADE 2>/dev/null; then
     iptables -t nat -A POSTROUTING -s 192.234.0.0/16 -o eth0 -j MASQUERADE
-
-# Autostart: jalankan ulang saat node boot (/root/init.sh dieksekusi image saat boot).
-[ -f /root/init.sh ] || echo '#!/bin/sh' > /root/init.sh
-grep -qF 'sh /root/soal_1.sh >> /root/soal_1.log 2>&1' /root/init.sh || echo 'sh /root/soal_1.sh >> /root/soal_1.log 2>&1' >> /root/init.sh
-chmod 755 /root/init.sh
+fi
 
 # Bukti
 ip -4 -br addr

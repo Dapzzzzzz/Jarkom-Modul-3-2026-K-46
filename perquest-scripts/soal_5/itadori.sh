@@ -1,6 +1,8 @@
 #!/bin/sh
-# Soal 5 - itadori (Divisi A pool 1 (2.10-2.35)): client DHCP biasa.
-# Simpan di /root/soal_5.sh lalu jalankan: sh /root/soal_5.sh
+# Soal 5
+#   - itadori (Divisi A pool 1 (2.10-2.35)): client DHCP biasa.
+
+# eth0 memakai DHCP
 cat > /etc/network/interfaces <<'EOF'
 auto lo
 iface lo inet loopback

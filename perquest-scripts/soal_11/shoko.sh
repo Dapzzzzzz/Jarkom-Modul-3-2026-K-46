@@ -21,15 +21,6 @@ EOF
 named-checkconf
 service named restart
 
-# Autostart
-if [ ! -f /root/init.sh ]; then
-    echo '#!/bin/sh' > /root/init.sh
-fi
-if ! grep -qF 'service named start' /root/init.sh; then
-    echo 'service named start >> /root/soal_11.log 2>&1' >> /root/init.sh
-fi
-chmod 755 /root/init.sh
-
 # Bukti: zona tersalin dari master
 sleep 3
 service named status

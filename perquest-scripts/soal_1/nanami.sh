@@ -1,9 +1,6 @@
 #!/bin/sh
-# Soal 1 - nanami: IP statis 192.234.4.5/24, gateway 192.234.4.1.
-# Simpan di /root/soal_1.sh lalu jalankan: sh /root/soal_1.sh
-IP=192.234.4.5
-GW=192.234.4.1
-DNS=192.168.122.1   # nameserver awal agar bisa mengunduh paket
+# Soal 1
+#   - nanami: IP statis 192.234.4.5/24, gateway 192.234.4.1.
 
 # Konfigurasi permanen (dibaca ulang saat boot)
 cat > /etc/network/interfaces <<'EOF'
@@ -20,13 +17,13 @@ EOF
 
 # Terapkan sekarang
 ip addr flush dev eth0
-ip addr add $IP/24 dev eth0
+ip addr add 192.234.4.5/24 dev eth0
 ip link set eth0 up
-ip route replace default via $GW
-echo "nameserver $DNS" > /etc/resolv.conf
+ip route replace default via 192.234.4.1
+echo "nameserver 192.168.122.1" > /etc/resolv.conf   # nameserver awal agar bisa mengunduh paket
 
 # Bukti
 ip -4 -br addr show eth0
 ip route | grep default
-ping -c 3 $GW
+ping -c 3 192.234.4.1
 # Akses eksternal: ping -c 3 google.com
