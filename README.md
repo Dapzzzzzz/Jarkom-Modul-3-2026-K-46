@@ -80,6 +80,35 @@ validasi konfigurasi server, lalu renew lease pada client. Buktikan
 bahwa alamat yang diterima sesuai dengan reservasi.
 ```
 
+Kugisaki harus selalu menerima alamat `192.234.3.99`. Caranya, di `dhcpd.conf`
+tengen ditambahkan deklarasi `host` yang mengikat MAC Address kugisaki ke alamat
+tetap:
+
+```
+...
+# Kugisaki (VIP): alamat tetap berdasarkan MAC, di luar semua pool dinamis
+host kugisaki {
+  hardware ethernet 02:42:6b:21:47:00;
+  fixed-address 192.234.3.99;
+}
+...
+```
+
+Lalu, kugisaki melakukan restart koneksi LAN untuk me-refresh lease:
+
+```
+# Renew lease
+$ pkill udhcpc 2>/dev/null
+$ ip addr flush dev eth0
+$ ifdown eth0 2>/dev/null
+$ ifup eth0
+
+# Bukti: alamat harus 192.234.3.99
+$ ip -4 -br addr show eth0
+$ ip route | grep default
+$ cat /etc/resolv.conf
+```
+
 ## Soal 7
 
 ```
@@ -91,6 +120,27 @@ dan routing seluruh client Divisi A dan Divisi B, kemudian cocokkan
 lease dengan /var/lib/dhcp/dhcpd.leases pada tengen. Pastikan tidak ada
 alamat yang bertabrakan atau berada di luar kebijakan pool.
 ```
+
+Soal ini tidak mengubah konfigurasi, hanya memverifikasi hasil soal 2–6 dari
+dua sisi.
+
+| Pemeriksaan | Nilai yang diharapkan |
+| --- | --- |
+| IP | dalam pool client (mis. itadori `192.234.2.10–35`) |
+| Subnet mask | `/24` |
+| Broadcast | `192.234.<net>.255` |
+| Gateway | `192.234.<net>.1` (interface jichi) |
+| DNS | `192.234.1.2` dan `192.234.1.3` di `/etc/resolv.conf` |
+| Domain search | `search K46.com` |
+| Konektivitas | ping ke gateway dan ke tengen `192.234.4.10` |
+
+Langkah:
+
+1. Baca `/var/lib/dhcp/dhcpd.leases`, mengambil lease berstatus `active`,
+   lalu menamai client berdasarkan MAC Address.
+2. Periksa bahwa setiap IP berada di salah satu pool yang diizinkan.
+3. Periksa tabrakan: tidak ada IP yang muncul dua kali dan tidak ada MAC
+   yang memegang lebih dari satu lease.
 
 ## Soal 8
 
@@ -104,6 +154,49 @@ yang diberikan, lease time, dan field giaddr. Pastikan nilai giaddr
 sesuai dengan interface jichi yang menerima request dari subnet client.
 ```
 
+Pertukaran DHCP (Discover-Offer-Request-Ack / DORA) direkam dengan `tcpdump` di tengen, sementara miwa
+(Network 3) meminta lease baru. Pertama, tengen merekam paket DHCP selama 40
+detik:
+
+```
+# Install tcpdump jika belum ada
+$ apt-get update && apt-get install -y tcpdump
+
+# Capture paket DHCP (port 67/68) selama 40 detik
+$ timeout 40 tcpdump -i eth0 -n -vv -l 'udp and (port 67 or port 68)' > /root/soal_8.log 2>&1 &
+```
+
+Selama capture berjalan, miwa melepas lease lama dan meminta lease baru:
+
+```
+$ pkill udhcpc 2>/dev/null
+$ ip addr flush dev eth0
+$ ifdown eth0 2>/dev/null
+$ ifup eth0
+```
+
+Setelah capture selesai, tampilkan urutan pesan dan field yang diminta:
+
+```
+# Urutan pesan
+$ grep -E 'DHCP-Message' /root/soal_8.log
+
+# Server, alamat yang diberikan, lease time, giaddr
+$ grep -E 'Server-ID|Your-IP|Lease-Time|Gateway-IP|Client-Ethernet' /root/soal_8.log
+```
+
+| Field | Nilai yang diharapkan |
+| --- | --- |
+| Urutan pesan | DHCPDISCOVER → DHCPOFFER → DHCPREQUEST → DHCPACK |
+| Server-ID | `192.234.4.10` (tengen) |
+| Your-IP | dalam pool long lease `192.234.3.100–199` |
+| Lease-Time | `43200` detik |
+| Gateway-IP (giaddr) | `192.234.3.1` (eth3 jichi) |
+
+giaddr bernilai `192.234.3.1` karena request miwa diterima jichi lewat eth3
+(Network 3), lalu diteruskan relay ke tengen. Dari giaddr inilah tengen tahu
+subnet dan pool mana yang harus dipakai.
+
 ## Soal 9
 
 ```
@@ -115,6 +208,50 @@ lalu buktikan bahwa client kembali memperoleh alamat dari pool yang
 benar dengan gateway semula.
 ```
 
+Pertama, matikan DHCP Relay di jichi:
+
+```
+$ service isc-dhcp-relay stop
+
+# Bukti: proses dhcrelay sudah tidak ada
+$ pgrep dhcrelay
+```
+
+Lalu, itadori melepas lease lama dan mencoba meminta lease baru (3 kali
+percobaan, jeda 2 detik):
+
+```
+$ pkill udhcpc 2>/dev/null
+$ ip addr flush dev eth0
+$ udhcpc -i eth0 -n -q -t 3 -T 2
+```
+
+Gejalanya: DHCPDISCOVER dari itadori hanya ber-broadcast di Network 2 dan
+tidak pernah sampai ke tengen, sehingga `udhcpc` gagal dan itadori tidak
+mendapat IP.
+
+Setelah itu, pulihkan relay di jichi:
+
+```
+$ service isc-dhcp-relay start
+
+# Bukti: proses dhcrelay berjalan kembali
+$ ps -eo args | grep '[d]hcrelay'
+```
+
+Jalankan ulang permintaan DHCP di itadori. Kali ini lease berhasil diperoleh,
+lalu daemon DHCP client dinyalakan kembali:
+
+```
+$ udhcpc -i eth0 -n -q -t 3 -T 2
+$ ifdown eth0 2>/dev/null
+$ ifup eth0
+
+# Bukti: IP dalam Pool 1 (192.234.2.10-35), gateway 192.234.2.1
+$ ip -4 -br addr show eth0
+$ ip route | grep default
+```
+
 ## Soal 10
 
 ```
@@ -124,6 +261,61 @@ jichi, lalu restart kedua node. Verifikasi status layanan, IP, gateway,
 lease, dan konektivitas client Network 2–3. Pastikan kebijakan Pool 1,
 Pool 2, short lease, long lease, dan fixed address tetap berlaku.
 ```
+
+Image node menjalankan `/root/init.sh` saat boot, jadi perintah start
+service cukup didaftarkan ke file tersebut. Di tengen:
+
+```
+$ echo 'service isc-dhcp-server start >> /root/soal_2.log 2>&1' >> /root/init.sh
+$ chmod 755 /root/init.sh
+```
+
+Di jichi:
+
+```
+$ echo 'service isc-dhcp-relay start >> /root/soal_3.log 2>&1' >> /root/init.sh
+$ chmod 755 /root/init.sh
+```
+
+Forwarding dan NAT di jichi tidak perlu didaftarkan ke `init.sh`, karena
+sudah dipasang lewat baris `up` pada eth0 di `/etc/network/interfaces`
+(soal 1):
+
+```
+...
+auto eth0
+iface eth0 inet dhcp
+    up sysctl -w net.ipv4.ip_forward=1
+    up iptables -t nat -C POSTROUTING -s 192.234.0.0/16 -o eth0 -j MASQUERADE 2>/dev/null || iptables -t nat -A POSTROUTING -s 192.234.0.0/16 -o eth0 -j MASQUERADE
+...
+```
+
+Lalu, restart tengen dan jichi dari GNS3 dengan **Stop** lalu **Start**
+(bukan Reload, karena pada GNS3 3.0.6 node tidak selesai booting). Setelah
+node menyala, periksa layanannya:
+
+```
+# tengen
+$ service isc-dhcp-server status
+$ dhcpd -4 -t -cf /etc/dhcp/dhcpd.conf
+$ grep -E 'range|lease-time|fixed-address|allow members' /etc/dhcp/dhcpd.conf
+
+# jichi
+$ service isc-dhcp-relay status
+$ sysctl net.ipv4.ip_forward
+$ iptables -t nat -S POSTROUTING
+$ ping -c 2 192.234.4.10
+```
+
+Terakhir, di setiap client Network 2 dan 3 dilakukan pemeriksaan yang sama
+dengan soal 7, ditambah pengecekan bahwa daemon DHCP client masih berjalan:
+
+```
+$ pgrep udhcpc
+```
+
+Jika semua pemeriksaan lolos, kebijakan Pool 1, Pool 2, short lease, long
+lease, dan fixed address terbukti tetap berlaku setelah restart.
 
 ## Soal 11
 
