@@ -330,6 +330,90 @@ di utahime dinaikkan, lalu buktikan dengan melakukan query dig ke kedua
 server dari salah satu client.
 ```
 
+Pertama, install BIND9 di utahime dan daftarkan zona `jujutsu.K46.com`
+sebagai master. `allow-transfer` dan `also-notify` mengarah ke shoko
+(`192.234.1.3`), sehingga shoko diberi tahu setiap kali zona berubah:
+
+```
+# /etc/bind/named.conf.local
+zone "jujutsu.K46.com" {
+    type master;
+    file "/etc/bind/jujutsu/jujutsu.K46.com";
+    allow-transfer { 192.234.1.3; };
+    also-notify { 192.234.1.3; };
+    notify yes;
+};
+```
+
+Lalu, buat file zona berisi SOA dan NS untuk kedua server. Serial memakai
+format waktu `YYMMDDhhmm`, sehingga selalu naik setiap kali script dijalankan
+ulang. Record `uji` berisi nomor serial dan dipakai untuk mengecek
+sinkronisasi:
+
+```
+# /etc/bind/jujutsu/jujutsu.K46.com
+$TTL 604800
+@       IN  SOA ns1.jujutsu.K46.com. root.jujutsu.K46.com. (
+            <YYMMDDhhmm>  ; serial
+            604800        ; refresh
+            86400         ; retry
+            2419200       ; expire
+            604800 )      ; negative cache TTL
+
+@       IN  NS  ns1.jujutsu.K46.com.
+@       IN  NS  ns2.jujutsu.K46.com.
+ns1     IN  A   192.234.1.2
+ns2     IN  A   192.234.1.3
+uji     IN  TXT "serial <YYMMDDhhmm>"
+```
+
+```
+$ named-checkconf
+$ named-checkzone jujutsu.K46.com /etc/bind/jujutsu/jujutsu.K46.com
+$ service named restart
+```
+
+Di shoko, zona yang sama didaftarkan sebagai slave yang mengambil data dari
+utahime:
+
+```
+# /etc/bind/named.conf.local
+zone "jujutsu.K46.com" {
+    type slave;
+    masters { 192.234.1.2; };
+    file "/var/lib/bind/jujutsu.K46.com";
+};
+```
+
+```
+$ named-checkconf
+$ service named restart
+
+# Bukti: file zona tersalin dari master
+$ ls -la /var/lib/bind/
+$ dig @127.0.0.1 jujutsu.K46.com SOA +short
+```
+
+Untuk menguji sinkronisasi otomatis, naikkan serial di utahime (+1), ubah
+record `uji`, lalu reload zona. utahime akan mengirim NOTIFY ke shoko, dan
+shoko langsung menarik zona yang baru:
+
+```
+$ sed -i "s/^\( *\)$OLD\( *; serial\)/\1$NEW\2/" /etc/bind/jujutsu/jujutsu.K46.com
+$ sed -i "s/^uji .*/uji     IN  TXT \"serial $NEW\"/" /etc/bind/jujutsu/jujutsu.K46.com
+$ rndc reload jujutsu.K46.com
+```
+
+Terakhir, dari itadori lakukan query ke kedua server. Serial dan record `uji`
+dari master dan slave harus sama:
+
+```
+$ dig @192.234.1.2 jujutsu.K46.com SOA +noall +answer
+$ dig @192.234.1.3 jujutsu.K46.com SOA +noall +answer
+$ dig @192.234.1.2 uji.jujutsu.K46.com TXT +noall +answer
+$ dig @192.234.1.3 uji.jujutsu.K46.com TXT +noall +answer
+```
+
 ## Soal 12
 
 ```
@@ -341,6 +425,99 @@ IP gojo kembali ke domain resminya, dan aktifkan fitur DNS Forwarder
 pada BIND9 mengarah ke IP gateway internet (192.168.122.1). Uji dari
 client dengan dig untuk mengecek CNAME, PTR, dan buktikan client tetap
 bisa melakukan ping ke domain internet seperti google.com.
+```
+
+Pertama, aktifkan forwarder di utahime. Query untuk domain di luar zona
+lokal (misalnya `google.com`) diteruskan ke `192.168.122.1`, dan recursion
+diizinkan untuk seluruh jaringan internal:
+
+```
+# /etc/bind/named.conf.options
+options {
+    directory "/var/cache/bind";
+    forwarders { 192.168.122.1; };
+    allow-query { any; };
+    allow-recursion { 127.0.0.1; 192.234.0.0/16; };
+    dnssec-validation no;
+    listen-on { any; };
+    listen-on-v6 { none; };
+};
+```
+
+Lalu, tambahkan zona reverse `1.234.192.in-addr.arpa` di samping zona
+`jujutsu.K46.com` yang sudah ada, dengan transfer ke shoko seperti soal 11:
+
+```
+# /etc/bind/named.conf.local
+...
+zone "1.234.192.in-addr.arpa" {
+    type master;
+    file "/etc/bind/jujutsu/1.234.192.in-addr.arpa";
+    allow-transfer { 192.234.1.3; };
+    also-notify { 192.234.1.3; };
+    notify yes;
+};
+```
+
+Pada zona `jujutsu.K46.com`, tambahkan A record yang mengarah ke gojo
+(`192.234.1.4`) dan CNAME `www`. Serial dinaikkan agar shoko ikut
+memperbarui zonanya:
+
+```
+# /etc/bind/jujutsu/jujutsu.K46.com
+...
+@       IN  A      192.234.1.4
+www     IN  CNAME  jujutsu.K46.com.
+...
+```
+
+Zona reverse berisi PTR yang memetakan `192.234.1.4` kembali ke
+`jujutsu.K46.com`:
+
+```
+# /etc/bind/jujutsu/1.234.192.in-addr.arpa
+...
+@       IN  NS     ns1.jujutsu.K46.com.
+@       IN  NS     ns2.jujutsu.K46.com.
+4       IN  PTR    jujutsu.K46.com.
+```
+
+```
+$ named-checkconf
+$ named-checkzone jujutsu.K46.com /etc/bind/jujutsu/jujutsu.K46.com
+$ named-checkzone 1.234.192.in-addr.arpa /etc/bind/jujutsu/1.234.192.in-addr.arpa
+$ service named restart
+```
+
+Di shoko, `named.conf.options` diisi forwarder yang sama, karena client juga
+memakai shoko sebagai DNS kedua. Zona reverse ditambahkan sebagai slave:
+
+```
+# /etc/bind/named.conf.local
+...
+zone "1.234.192.in-addr.arpa" {
+    type slave;
+    masters { 192.234.1.2; };
+    file "/var/lib/bind/1.234.192.in-addr.arpa";
+};
+```
+
+Terakhir, uji dari itadori:
+
+```
+# A record dan CNAME
+$ dig jujutsu.K46.com A +noall +answer
+$ dig www.jujutsu.K46.com +noall +answer
+
+# PTR
+$ dig -x 192.234.1.4 +noall +answer
+
+# Lewat DNS Slave
+$ dig @192.234.1.3 www.jujutsu.K46.com +short
+$ dig @192.234.1.3 -x 192.234.1.4 +short
+
+# Domain internet lewat forwarder
+$ ping -c 3 google.com
 ```
 
 ## Soal 13
@@ -355,6 +532,107 @@ sebagai Slave yang menyalin data secara realtime dengan CHANGE MASTER
 TO. Berikan hak akses remote bagi seluruh node di Network 4, lalu
 buktikan replikasi berhasil dengan memasukkan data baru di Master dan
 memeriksa hasilnya di Slave.
+```
+
+Pertama, install MariaDB di yaga, lalu aktifkan binary log dengan
+`server-id = 1`. `bind-address` diubah ke `0.0.0.0` agar bisa diakses dari
+node lain:
+
+```
+# /etc/mysql/mariadb.conf.d/60-soal13.cnf
+[mysqld]
+bind-address  = 0.0.0.0
+server-id     = 1
+log-bin       = /var/log/mysql/mysql-bin
+binlog_format = ROW
+```
+
+```
+$ service mariadb restart
+```
+
+Lalu, buat database `db_shibuya_K46` dan tabel `request_logs`, user replikasi
+untuk inumaki, serta user aplikasi untuk seluruh Network 4
+(`192.234.4.%`):
+
+```sql
+CREATE DATABASE IF NOT EXISTS db_shibuya_K46;
+CREATE TABLE IF NOT EXISTS db_shibuya_K46.request_logs (
+    id         INT AUTO_INCREMENT PRIMARY KEY,
+    client_ip  VARCHAR(45)  NOT NULL,
+    worker     VARCHAR(32),
+    method     VARCHAR(8),
+    path       VARCHAR(255),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- User replikasi untuk inumaki
+CREATE USER IF NOT EXISTS 'repl'@'192.234.4.%' IDENTIFIED BY 'repl46';
+GRANT REPLICATION SLAVE, REPLICATION CLIENT ON *.* TO 'repl'@'192.234.4.%';
+
+-- Akses remote untuk seluruh node Network 4
+CREATE USER IF NOT EXISTS 'shibuya'@'192.234.4.%' IDENTIFIED BY 'shibuya46';
+GRANT ALL PRIVILEGES ON db_shibuya_K46.* TO 'shibuya'@'192.234.4.%';
+FLUSH PRIVILEGES;
+```
+
+```
+# Bukti
+$ mysql -e "SHOW VARIABLES WHERE Variable_name IN ('server_id','log_bin','bind_address');"
+$ mysql -e "SHOW MASTER STATUS;"
+```
+
+Di inumaki, install MariaDB lalu set `server-id = 2`, relay log, dan
+`read_only` agar data hanya berubah lewat replikasi:
+
+```
+# /etc/mysql/mariadb.conf.d/60-soal13.cnf
+[mysqld]
+bind-address = 0.0.0.0
+server-id    = 2
+relay-log    = /var/log/mysql/relay-bin
+read_only    = 1
+```
+
+Lalu, hubungkan inumaki ke yaga dengan `CHANGE MASTER TO`. Replikasi dimulai
+dari binlog pertama master (posisi 4), sehingga database dan tabel yang sudah
+dibuat di yaga ikut tersalin:
+
+```
+# Ambil nama binlog pertama di master
+$ mysql -h 192.234.4.8 -u repl -prepl46 -N -e "SHOW BINARY LOGS" | head -1
+```
+
+```sql
+STOP SLAVE;
+RESET SLAVE ALL;
+DROP DATABASE IF EXISTS db_shibuya_K46;
+CHANGE MASTER TO
+    MASTER_HOST='192.234.4.8',
+    MASTER_USER='repl',
+    MASTER_PASSWORD='repl46',
+    MASTER_LOG_FILE='<binlog pertama>',
+    MASTER_LOG_POS=4;
+START SLAVE;
+```
+
+```
+# Bukti: Slave_IO_Running dan Slave_SQL_Running harus Yes
+$ mysql -e "SHOW SLAVE STATUS\G" | grep -E 'Master_Host|Slave_IO_Running|Slave_SQL_Running|Seconds_Behind'
+```
+
+Terakhir, uji replikasi dengan memasukkan data baru di yaga:
+
+```
+$ mysql -e "INSERT INTO db_shibuya_K46.request_logs (client_ip, worker, method, path)
+            VALUES ('10.0.0.1', 'yaga', 'TEST', '/uji-replikasi-$(date +%H%M%S)');"
+```
+
+Lalu periksa di inumaki. Baris yang baru dimasukkan di yaga harus langsung
+muncul:
+
+```
+$ mysql -e "SELECT * FROM db_shibuya_K46.request_logs ORDER BY id DESC LIMIT 3;"
 ```
 
 ## Soal 14
