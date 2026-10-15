@@ -1,8 +1,10 @@
 #!/bin/sh
-# Soal 13 - yaga: MariaDB DB-Master. Binary log aktif, database db_shibuya_K46 + tabel request_logs,
-# akses remote untuk seluruh Network 4 (192.234.4.0/24).
-# Simpan di /root/soal_13.sh lalu jalankan: sh /root/soal_13.sh
-# Uji replikasi: sh /root/soal_13.sh uji   (insert baris baru di master)
+# Soal 13
+#   - yaga: MariaDB DB-Master. Binary log aktif, database db_shibuya_K46 + tabel request_logs,
+#     akses remote untuk seluruh Network 4 (192.234.4.0/24).
+#   - Uji replikasi: sh /root/soal_13.sh uji   (insert baris baru di master)
+
+# Mode uji: insert baris baru agar terlihat tersalin ke inumaki
 if [ "$1" = uji ]; then
     mysql -e "INSERT INTO db_shibuya_K46.request_logs (client_ip, worker, method, path)
               VALUES ('10.0.0.1', 'yaga', 'TEST', '/uji-replikasi-$(date +%H%M%S)');"
@@ -10,8 +12,12 @@ if [ "$1" = uji ]; then
     exit
 fi
 
-command -v mariadbd >/dev/null || { apt-get update && apt-get install -y mariadb-server; }
+# Install MariaDB jika belum ada
+if ! command -v mariadbd >/dev/null; then
+    apt-get update && apt-get install -y mariadb-server
+fi
 
+# Aktifkan binary log dan server-id 1
 mkdir -p /var/log/mysql && chown mysql:mysql /var/log/mysql
 cat > /etc/mysql/mariadb.conf.d/60-soal13.cnf <<'EOF'
 [mysqld]
@@ -23,6 +29,7 @@ EOF
 
 service mariadb restart
 
+# Buat database, tabel, user replikasi, dan user aplikasi
 mysql <<'EOF'
 CREATE DATABASE IF NOT EXISTS db_shibuya_K46;
 CREATE TABLE IF NOT EXISTS db_shibuya_K46.request_logs (
@@ -45,8 +52,12 @@ FLUSH PRIVILEGES;
 EOF
 
 # Autostart
-[ -f /root/init.sh ] || echo '#!/bin/sh' > /root/init.sh
-grep -qF 'service mariadb start' /root/init.sh || echo 'service mariadb start >> /root/soal_13.log 2>&1' >> /root/init.sh
+if [ ! -f /root/init.sh ]; then
+    echo '#!/bin/sh' > /root/init.sh
+fi
+if ! grep -qF 'service mariadb start' /root/init.sh; then
+    echo 'service mariadb start >> /root/soal_13.log 2>&1' >> /root/init.sh
+fi
 chmod 755 /root/init.sh
 
 # Bukti

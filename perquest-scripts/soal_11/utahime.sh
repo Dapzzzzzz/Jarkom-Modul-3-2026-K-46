@@ -1,21 +1,29 @@
 #!/bin/sh
-# Soal 11 - utahime: DNS Master (BIND9) untuk jujutsu.K46.com, transfer zona ke shoko 192.234.1.3.
-# Simpan di /root/soal_11.sh lalu jalankan: sh /root/soal_11.sh
-# Uji sinkronisasi: sh /root/soal_11.sh naikkan   (serial +1 dan record uji diubah)
+# Soal 11
+#   - utahime: DNS Master (BIND9) untuk jujutsu.K46.com, transfer zona ke shoko 192.234.1.3.
+#   - Uji sinkronisasi: sh /root/soal_11.sh naikkan   (serial +1 dan record uji diubah)
+
 ZONE=/etc/bind/jujutsu/jujutsu.K46.com
 
+# Mode uji: naikkan serial dan ubah record uji, lalu reload zona
 if [ "$1" = naikkan ]; then
     OLD=$(awk '/; serial/{print $1}' $ZONE)
     NEW=$((OLD + 1))
     sed -i "s/^\( *\)$OLD\( *; serial\)/\1$NEW\2/" $ZONE
     sed -i "s/^uji .*/uji     IN  TXT \"serial $NEW\"/" $ZONE
-    named-checkzone jujutsu.K46.com $ZONE && rndc reload jujutsu.K46.com
+    if named-checkzone jujutsu.K46.com $ZONE; then
+        rndc reload jujutsu.K46.com
+    fi
     echo "Serial $OLD -> $NEW"
     exit
 fi
 
-command -v named >/dev/null || { apt-get update && apt-get install -y bind9 bind9utils; }
+# Install BIND9 jika belum ada
+if ! command -v named >/dev/null; then
+    apt-get update && apt-get install -y bind9 bind9utils
+fi
 
+# Zona master, izinkan transfer dan kirim notify ke shoko
 cat > /etc/bind/named.conf.local <<'EOF'
 zone "jujutsu.K46.com" {
     type master;
@@ -45,13 +53,18 @@ ns2     IN  A   192.234.1.3
 uji     IN  TXT "serial $SERIAL"
 EOF
 
+# Cek sintaks lalu restart named
 named-checkconf
 named-checkzone jujutsu.K46.com $ZONE
 service named restart
 
 # Autostart
-[ -f /root/init.sh ] || echo '#!/bin/sh' > /root/init.sh
-grep -qF 'service named start' /root/init.sh || echo 'service named start >> /root/soal_11.log 2>&1' >> /root/init.sh
+if [ ! -f /root/init.sh ]; then
+    echo '#!/bin/sh' > /root/init.sh
+fi
+if ! grep -qF 'service named start' /root/init.sh; then
+    echo 'service named start >> /root/soal_11.log 2>&1' >> /root/init.sh
+fi
 chmod 755 /root/init.sh
 
 # Bukti

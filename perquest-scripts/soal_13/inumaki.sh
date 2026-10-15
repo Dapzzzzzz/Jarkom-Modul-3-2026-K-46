@@ -1,12 +1,17 @@
 #!/bin/sh
-# Soal 13 - inumaki: MariaDB DB-Slave yang menyalin data dari yaga (192.234.4.8) secara realtime.
-# Simpan di /root/soal_13.sh lalu jalankan: sh /root/soal_13.sh   (jalankan setelah yaga)
-# Cek hasil replikasi: sh /root/soal_13.sh cek
+# Soal 13
+#   - inumaki: MariaDB DB-Slave yang menyalin data dari yaga (192.234.4.8) secara realtime.
+#   - Jalankan setelah yaga. Cek hasil replikasi: sh /root/soal_13.sh cek
+
 MASTER=192.234.4.8
 
 if [ "$1" != cek ]; then
-    command -v mariadbd >/dev/null || { apt-get update && apt-get install -y mariadb-server; }
+    # Install MariaDB jika belum ada
+    if ! command -v mariadbd >/dev/null; then
+        apt-get update && apt-get install -y mariadb-server
+    fi
 
+    # Server-id 2, relay log, dan read-only
     mkdir -p /var/log/mysql && chown mysql:mysql /var/log/mysql
     cat > /etc/mysql/mariadb.conf.d/60-soal13.cnf <<'EOF'
 [mysqld]
@@ -34,13 +39,19 @@ START SLAVE;
 EOF
 
     # Autostart
-    [ -f /root/init.sh ] || echo '#!/bin/sh' > /root/init.sh
-    grep -qF 'service mariadb start' /root/init.sh || echo 'service mariadb start >> /root/soal_13.log 2>&1' >> /root/init.sh
+    if [ ! -f /root/init.sh ]; then
+        echo '#!/bin/sh' > /root/init.sh
+    fi
+    if ! grep -qF 'service mariadb start' /root/init.sh; then
+        echo 'service mariadb start >> /root/soal_13.log 2>&1' >> /root/init.sh
+    fi
     chmod 755 /root/init.sh
 
     # Tunggu IO thread terhubung ke master (maks. 60 detik)
     for i in $(seq 1 30); do
-        mysql -e "SHOW SLAVE STATUS\G" | grep -q 'Slave_IO_Running: Yes' && break
+        if mysql -e "SHOW SLAVE STATUS\G" | grep -q 'Slave_IO_Running: Yes'; then
+            break
+        fi
         sleep 2
     done
 fi

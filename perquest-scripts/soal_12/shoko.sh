@@ -1,7 +1,10 @@
 #!/bin/sh
-# Soal 12 - shoko: slave juga untuk zona PTR, dan forwarder yang sama dengan master
-# (client memakai 192.234.1.3 sebagai DNS kedua). Jalankan setelah utahime.
-# Simpan di /root/soal_12.sh lalu jalankan: sh /root/soal_12.sh
+# Soal 12
+#   - shoko: slave juga untuk zona PTR, dan forwarder yang sama dengan master
+#     (client memakai 192.234.1.3 sebagai DNS kedua).
+#   - Jalankan setelah utahime.
+
+# Forwarder + izinkan recursion untuk seluruh jaringan internal
 cat > /etc/bind/named.conf.options <<'EOF'
 options {
     directory "/var/cache/bind";
@@ -14,6 +17,7 @@ options {
 };
 EOF
 
+# Zona slave: forward dan reverse (PTR)
 cat > /etc/bind/named.conf.local <<'EOF'
 zone "jujutsu.K46.com" {
     type slave;
@@ -28,6 +32,7 @@ zone "1.234.192.in-addr.arpa" {
 };
 EOF
 
+# Cek sintaks lalu restart named
 named-checkconf
 service named restart
 

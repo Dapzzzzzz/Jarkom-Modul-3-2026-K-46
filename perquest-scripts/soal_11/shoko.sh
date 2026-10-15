@@ -1,8 +1,14 @@
 #!/bin/sh
-# Soal 11 - shoko: DNS Slave (BIND9) untuk jujutsu.K46.com, menyalin zona dari utahime 192.234.1.2.
-# Simpan di /root/soal_11.sh lalu jalankan: sh /root/soal_11.sh   (jalankan setelah utahime)
-command -v named >/dev/null || { apt-get update && apt-get install -y bind9 bind9utils; }
+# Soal 11
+#   - shoko: DNS Slave (BIND9) untuk jujutsu.K46.com, menyalin zona dari utahime 192.234.1.2.
+#   - Jalankan setelah utahime.
 
+# Install BIND9 jika belum ada
+if ! command -v named >/dev/null; then
+    apt-get update && apt-get install -y bind9 bind9utils
+fi
+
+# Zona slave, ambil dari master utahime
 cat > /etc/bind/named.conf.local <<'EOF'
 zone "jujutsu.K46.com" {
     type slave;
@@ -11,12 +17,17 @@ zone "jujutsu.K46.com" {
 };
 EOF
 
+# Cek sintaks lalu restart named
 named-checkconf
 service named restart
 
 # Autostart
-[ -f /root/init.sh ] || echo '#!/bin/sh' > /root/init.sh
-grep -qF 'service named start' /root/init.sh || echo 'service named start >> /root/soal_11.log 2>&1' >> /root/init.sh
+if [ ! -f /root/init.sh ]; then
+    echo '#!/bin/sh' > /root/init.sh
+fi
+if ! grep -qF 'service named start' /root/init.sh; then
+    echo 'service named start >> /root/soal_11.log 2>&1' >> /root/init.sh
+fi
 chmod 755 /root/init.sh
 
 # Bukti: zona tersalin dari master

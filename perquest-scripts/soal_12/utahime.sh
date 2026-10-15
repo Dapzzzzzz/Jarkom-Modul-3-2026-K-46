@@ -1,7 +1,9 @@
 #!/bin/sh
-# Soal 12 - utahime: A record jujutsu.K46.com -> gojo 192.234.1.4, CNAME www, zona PTR untuk gojo,
-# dan DNS forwarder ke 192.168.122.1. Jalankan setelah soal 11.
-# Simpan di /root/soal_12.sh lalu jalankan: sh /root/soal_12.sh
+# Soal 12
+#   - utahime: A record jujutsu.K46.com -> gojo 192.234.1.4, CNAME www, zona PTR untuk gojo,
+#     dan DNS forwarder ke 192.168.122.1.
+#   - Jalankan setelah soal 11.
+
 ZONE=/etc/bind/jujutsu/jujutsu.K46.com
 RZONE=/etc/bind/jujutsu/1.234.192.in-addr.arpa
 
@@ -18,6 +20,7 @@ options {
 };
 EOF
 
+# Zona master: forward dan reverse (PTR), transfer ke shoko
 cat > /etc/bind/named.conf.local <<'EOF'
 zone "jujutsu.K46.com" {
     type master;
@@ -39,8 +42,11 @@ EOF
 # Serial harus lebih besar dari serial soal 11 agar shoko ikut memperbarui
 OLD=$(awk '/; serial/{print $1}' $ZONE 2>/dev/null)
 SERIAL=$(date +%y%m%d%H%M)
-[ -n "$OLD" ] && [ "$SERIAL" -le "$OLD" ] && SERIAL=$((OLD + 1))
+if [ -n "$OLD" ] && [ "$SERIAL" -le "$OLD" ]; then
+    SERIAL=$((OLD + 1))
+fi
 
+# Zona forward
 mkdir -p /etc/bind/jujutsu
 cat > $ZONE <<EOF
 \$TTL 604800
@@ -60,6 +66,7 @@ ns2     IN  A      192.234.1.3
 uji     IN  TXT    "serial $SERIAL"
 EOF
 
+# Zona reverse (PTR) untuk gojo
 cat > $RZONE <<EOF
 \$TTL 604800
 @       IN  SOA ns1.jujutsu.K46.com. root.jujutsu.K46.com. (
@@ -74,6 +81,7 @@ cat > $RZONE <<EOF
 4       IN  PTR    jujutsu.K46.com.
 EOF
 
+# Cek sintaks lalu restart named
 named-checkconf
 named-checkzone jujutsu.K46.com $ZONE
 named-checkzone 1.234.192.in-addr.arpa $RZONE
