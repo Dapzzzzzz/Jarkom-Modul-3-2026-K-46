@@ -11,16 +11,92 @@
 ---
 
 ## Soal 1
+Ketika Curtain menutup Shibuya, jalur komunikasi antar zona Jujutsu High terputus. Pulihkan konektivitas dasar dengan mengonfigurasi jichi: eth0 memperoleh WAN dari NAT, sedangkan eth1–eth4 menjadi gateway Network 1–4 sesuai tabel pemetaan. Aktifkan IPv4 forwarding dan source NAT, lalu tetapkan IP statis host infrastruktur sesuai tabel spesifikasi. Buktikan konektivitas setiap host ke gateway dan akses eksternal dari host yang relevan.
 
+### Jawaban dan Penjelasan
+
+#### 1. Konfigurasi `jichi`
+
+Node `jichi` berfungsi sebagai router utama yang menghubungkan empat jaringan. Interface `eth0` menggunakan DHCP dari NAT, sedangkan `eth1` sampai `eth4` menjadi gateway masing-masing network.
+
+```bash
+auto eth0
+iface eth0 inet dhcp
+
+auto eth1
+iface eth1 inet static
+    address 192.234.1.1
+    netmask 255.255.255.0
+
+auto eth2
+iface eth2 inet static
+    address 192.234.2.1
+    netmask 255.255.255.0
+
+auto eth3
+iface eth3 inet static
+    address 192.234.3.1
+    netmask 255.255.255.0
+
+auto eth4
+iface eth4 inet static
+    address 192.234.4.1
+    netmask 255.255.255.0
 ```
-Ketika Curtain menutup Shibuya, jalur komunikasi antar zona Jujutsu High
-terputus. Pulihkan konektivitas dasar dengan mengonfigurasi jichi: eth0
-memperoleh WAN dari NAT, sedangkan eth1–eth4 menjadi gateway Network 1–4
-sesuai tabel pemetaan. Aktifkan IPv4 forwarding dan source NAT, lalu
-tetapkan IP statis host infrastruktur sesuai tabel spesifikasi. Buktikan
-konektivitas setiap host ke gateway dan akses eksternal dari host yang
-relevan.
+
+Selanjutnya, dilakukan konfigurasi IPv4 forwarding dan source NAT.
+
+```bash
+sysctl -w net.ipv4.ip_forward=1
+
+iptables -t nat -C POSTROUTING -s 192.234.0.0/16 -o eth0 -j MASQUERADE 2>/dev/null ||
+    iptables -t nat -A POSTROUTING -s 192.234.0.0/16 -o eth0 -j MASQUERADE
 ```
+
+IPv4 forwarding memungkinkan `jichi` meneruskan paket antarjaringan. Sementara itu, `MASQUERADE` digunakan untuk mengubah IP sumber paket menjadi IP WAN milik `jichi` agar node internal dapat mengakses jaringan eksternal. Opsi `-C` digunakan untuk memeriksa keberadaan aturan NAT sebelum menambahkannya dengan `-A`.
+
+#### 2. Konfigurasi Node Infrastruktur
+
+Node `utahime`, `shoko`, `gojo`, `tengen`, `geto`, `maki`, `panda`, `nanami`, `todo`, `kirara`, `yaga`, dan `inumaki` menggunakan pola konfigurasi yang sama. Perbedaannya hanya terdapat pada IP address dan gateway sesuai network masing-masing.
+
+Sebagai contoh, berikut konfigurasi pada node `tengen`:
+
+```bash
+auto eth0
+iface eth0 inet static
+    address 192.234.4.10
+    netmask 255.255.255.0
+    gateway 192.234.4.1
+    up echo "nameserver 192.168.122.1" > /etc/resolv.conf
+```
+
+Konfigurasi tersebut menetapkan IP statis, subnet mask `/24`, gateway menuju `jichi`, dan DNS sementara. Node pada Network 1 menggunakan gateway `192.234.1.1`, sedangkan node pada Network 4 menggunakan gateway `192.234.4.1`.
+
+### Verifikasi
+
+#### 1. Verifikasi Konfigurasi `jichi`
+
+```bash
+ip -4 -br addr
+sysctl net.ipv4.ip_forward
+iptables -t nat -S POSTROUTING
+```
+
+Berdasarkan hasil pengujian, interface `eth1` sampai `eth4` telah memiliki IP sesuai pembagian network. Nilai `net.ipv4.ip_forward = 1` menunjukkan bahwa IPv4 forwarding aktif, sedangkan aturan `MASQUERADE` menunjukkan bahwa source NAT telah dikonfigurasi.
+
+<img width="769" height="400" alt="image" src="https://github.com/user-attachments/assets/a5e7e6e7-0896-452a-a373-84e26f9d9c07" />
+
+#### 2. Verifikasi Konektivitas Node `tengen`
+
+```bash
+ping -c 3 192.234.4.1
+ping -c 3 8.8.8.8
+```
+
+Pengujian dilakukan dari node `tengen` menuju gateway `192.234.4.1` dan IP eksternal `8.8.8.8`. Kedua pengujian menghasilkan 3 paket terkirim, 3 paket diterima, dan 0% packet loss. Hal ini membuktikan bahwa `tengen` dapat terhubung ke gateway dan mengakses jaringan eksternal melalui `jichi`.
+
+![Uploading image.png…]()
+
 
 ## Soal 2
 
