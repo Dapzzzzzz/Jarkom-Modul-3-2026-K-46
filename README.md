@@ -1251,58 +1251,454 @@ Berdasarkan hasil pengujian, konfigurasi Path-Based Routing pada `gojo` telah be
 
 
 ## Soal 17
+Komando pusat perlu mengetahui IP asli klien yang mengirimkan request tanpa tertukar dengan IP proxy perantara. Konfigurasikan gojo dan geto agar meneruskan informasi alamat klien melalui header X-Real-IP dan X-Forwarded-For. Pastikan geto hanya mempercayai informasi alamat klien yang diterima dari proxy terpercaya, dan skrip API menyimpan alamat klien yang telah diverifikasi ke kolom client_ip pada tabel request_logs di database yaga. Uji dengan mengirimkan request dari klien Network 2 dan Network 3 ke endpoint /api, kemudian periksa database untuk memastikan alamat yang tercatat sesuai dengan IP klien asal, bukan IP gojo atau geto.
 
+### Jawaban dan Penjelasan
+
+Pada soal ini, dilakukan konfigurasi pada `gojo` dan `geto` untuk meneruskan alamat IP asli client melalui header HTTP. Hal ini diperlukan agar API worker dapat mengetahui alamat client sebenarnya meskipun request melewati beberapa reverse proxy.
+
+#### 1. Konfigurasi `gojo`
+
+Pada node `gojo`, ditambahkan konfigurasi header berikut pada file `/etc/nginx/conf.d/soal16.conf`.
+
+```nginx
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $remote_addr;
 ```
-Komando pusat perlu mengetahui IP asli klien yang mengirimkan request
-tanpa tertukar dengan IP proxy perantara. Konfigurasikan gojo dan geto
-agar meneruskan informasi alamat klien melalui header X-Real-IP dan
-X-Forwarded-For. Pastikan geto hanya mempercayai informasi alamat klien
-yang diterima dari proxy terpercaya, dan skrip API menyimpan alamat
-klien yang telah diverifikasi ke kolom client_ip pada tabel request_logs
-di database yaga. Uji dengan mengirimkan request dari klien Network 2
-dan Network 3 ke endpoint /api, kemudian periksa database untuk
-memastikan alamat yang tercatat sesuai dengan IP klien asal, bukan IP
-gojo atau geto.
+
+Konfigurasi tersebut memungkinkan `gojo` meneruskan alamat IP client yang terhubung langsung kepadanya. Nilai header diambil dari `$remote_addr` agar header yang dikirim sendiri oleh client tidak langsung dipercaya.
+
+#### 2. Konfigurasi `geto`
+
+Pada node `geto`, konfigurasi dilakukan melalui file `/etc/nginx/conf.d/soal15.conf`.
+
+```nginx
+set_real_ip_from 192.234.1.4;
+real_ip_header X-Forwarded-For;
+real_ip_recursive on;
+
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $remote_addr;
 ```
+
+Directive `set_real_ip_from` digunakan untuk menentukan proxy terpercaya, yaitu `gojo` dengan IP `192.234.1.4`. Sementara itu, `real_ip_header` digunakan untuk membaca alamat client dari header yang diterima melalui proxy tersebut.
+
+Dengan konfigurasi ini, `geto` dapat meneruskan IP client yang telah diverifikasi menuju API worker.
+
+#### 3. Pencatatan IP Client pada API Worker
+
+Pada node `nanami`, `todo`, dan `kirara`, aplikasi PHP digunakan untuk membaca informasi alamat client dari proxy terpercaya dan menyimpannya ke database `yaga`.
+
+Pencatatan dilakukan pada tabel `request_logs`, khususnya kolom `client_ip`. Dengan demikian, database dapat menyimpan alamat client asal, bukan hanya alamat IP proxy perantara.
+
+### Verifikasi
+
+#### 1. Verifikasi Header pada `gojo`
+
+Pengujian dilakukan untuk memeriksa konfigurasi header HTTP yang diteruskan oleh `gojo`.
+
+```bash
+nginx -t
+grep 'proxy_set_header X-' /etc/nginx/conf.d/soal16.conf
+```
+
+Hasil yang diharapkan adalah konfigurasi Nginx valid serta terdapat header `X-Real-IP` dan `X-Forwarded-For` yang menggunakan `$remote_addr`.
+
+<img width="454" height="131" alt="image" src="https://github.com/user-attachments/assets/050321da-2ddf-4a38-b041-9cc31f3e76b9" />
+
+#### 2. Verifikasi Trusted Proxy pada `geto`
+
+Pengujian dilakukan untuk memastikan bahwa `geto` hanya mempercayai alamat IP yang diterima dari proxy terpercaya.
+
+```bash
+nginx -t
+grep -E 'set_real_ip_from|real_ip_header|real_ip_recursive|proxy_set_header X-' /etc/nginx/conf.d/soal15.conf
+```
+
+Hasil yang diharapkan menunjukkan `set_real_ip_from 192.234.1.4`, penggunaan `X-Forwarded-For`, serta konfigurasi penerusan IP asli menuju API worker.
+
+<img width="737" height="158" alt="image" src="https://github.com/user-attachments/assets/01d38a8e-c982-40a6-949a-83a3153c3328" />
+
+#### 3. Verifikasi IP Client Network 2 pada `itadori`
+
+Pengujian dilakukan dari `itadori` untuk melihat apakah alamat IP asli tetap terbaca ketika request melewati reverse proxy.
+
+```bash
+ip -4 -br addr show eth0
+curl -s --resolve jujutsu.k46.com:80:192.234.1.4 http://jujutsu.k46.com/api/soal17-itadori
+```
+
+Kemudian dilakukan pengujian menggunakan header IP yang berbeda untuk memastikan alamat palsu tidak digunakan.
+
+```bash
+curl -s --resolve jujutsu.k46.com:80:192.234.1.4 -H 'X-Real-IP: 203.0.113.123' -H 'X-Forwarded-For: 203.0.113.123' http://jujutsu.k46.com/api/soal17-itadori-spoof
+```
+
+Hasil yang diharapkan adalah respons JSON dengan `"ok":true` dan nilai `client_ip` yang sesuai dengan alamat IP asli `itadori`, bukan `203.0.113.123` atau IP proxy.
+
+<img width="936" height="118" alt="image" src="https://github.com/user-attachments/assets/ec250338-4065-40c0-88d0-3c4f1c8fb8b8" />
+
+#### 4. Verifikasi IP Client Network 3 pada `kusakabe`
+
+Pengujian yang sama dilakukan dari `kusakabe` untuk memastikan IP asli dari Network 3 dapat diteruskan dengan benar.
+
+```bash
+ip -4 -br addr show eth0
+curl -s --resolve jujutsu.k46.com:80:192.234.1.4 http://jujutsu.k46.com/api/soal17-kusakabe
+```
+
+Selanjutnya, dilakukan pengujian menggunakan header IP yang berbeda.
+
+```bash
+curl -s --resolve jujutsu.k46.com:80:192.234.1.4 -H 'X-Real-IP: 203.0.113.123' -H 'X-Forwarded-For: 203.0.113.123' http://jujutsu.k46.com/api/soal17-kusakabe-spoof
+```
+
+Hasil yang diharapkan adalah alamat `client_ip` sesuai dengan IP asli `kusakabe` pada Network 3, meskipun request dikirimkan dengan header IP palsu.
+
+<img width="921" height="118" alt="image" src="https://github.com/user-attachments/assets/52dee8d3-54ca-479e-8c62-a42cf88de9a4" />
+
+#### 5. Verifikasi Database pada `yaga`
+
+Pengujian terakhir dilakukan pada database `yaga` untuk memastikan alamat IP client yang disimpan sesuai dengan asal request.
+
+```bash
+mysql -e "SELECT id, client_ip, worker, method, path FROM db_shibuya_K46.request_logs WHERE path LIKE '/api/soal17-%' ORDER BY id DESC LIMIT 20;"
+```
+
+Hasil yang diharapkan menunjukkan request dari `itadori` menggunakan IP Network 2 (`192.234.2.x`) dan request dari `kusakabe` menggunakan IP Network 3 (`192.234.3.x`).
+
+Nilai `client_ip` juga harus sesuai dengan alamat client yang digunakan saat pengujian, bukan alamat `gojo` (`192.234.1.4`), `geto` (`192.234.4.2`), maupun header IP palsu.
+
+<img width="650" height="386" alt="image" src="https://github.com/user-attachments/assets/020eb402-3132-4ac1-a5eb-4908f7c52969" />
+
+Berdasarkan pengujian yang dilakukan, keberhasilan Soal 17 dapat dibuktikan apabila kedua client menerima respons API dengan IP asli yang benar dan database `yaga` mencatat alamat tersebut secara konsisten. Hal ini menunjukkan bahwa penerusan dan verifikasi alamat IP client melalui reverse proxy telah berjalan sesuai ketentuan.
 
 ## Soal 18
 
+### Soal
+
+nanami dan todo merupakan worker API utama, sedangkan kirara disiapkan sebagai worker cadangan. Konfigurasikan upstream api_cluster pada geto agar kirara menjadi server backup, serta terapkan passive health check dengan parameter max_fails=2 dan fail_timeout=5s pada worker API utama. Pastikan kirara menjalankan layanan API yang kompatibel dengan endpoint utama. Simulasikan gangguan dengan menghentikan layanan Nginx atau layanan API pada nanami dan todo. Buktikan dari klien bahwa request ke /api dialihkan ke kirara dan menghasilkan respons API yang valid tanpa error 502 Bad Gateway.
+
+### Jawaban dan Penjelasan
+
+#### Konfigurasi `geto`
+
+Pada soal ini, node `geto` dikonfigurasi menggunakan Nginx sebagai Load Balancer dengan mekanisme failover. `nanami` dan `todo` digunakan sebagai API worker utama, sedangkan `kirara` menjadi worker cadangan apabila kedua server utama mengalami gangguan.
+
+Konfigurasi dilakukan pada file `/etc/nginx/conf.d/soal15.conf`.
+
+```nginx
+upstream api_cluster {
+    zone api_cluster 64k;
+    server 192.234.4.5:80 weight=3 max_fails=2 fail_timeout=5s;
+    server 192.234.4.6:80 weight=1 max_fails=2 fail_timeout=5s;
+    server 192.234.4.7:80 backup;
+}
 ```
-nanami dan todo merupakan worker API utama, sedangkan kirara disiapkan
-sebagai worker cadangan. Konfigurasikan upstream api_cluster pada geto
-agar kirara menjadi server backup, serta terapkan passive health check
-dengan parameter max_fails=2 dan fail_timeout=5s pada worker API utama.
-Pastikan kirara menjalankan layanan API yang kompatibel dengan endpoint
-utama. Simulasikan gangguan dengan menghentikan layanan Nginx atau
-layanan API pada nanami dan todo. Buktikan dari klien bahwa request ke
-/api dialihkan ke kirara dan menghasilkan respons API yang valid tanpa
-error 502 Bad Gateway.
+
+Parameter `max_fails=2` dan `fail_timeout=5s` digunakan untuk menerapkan passive health check. Jika worker utama mengalami dua kegagalan dalam periode lima detik, Nginx akan menganggap worker tersebut tidak tersedia untuk sementara.
+
+Directive `backup` digunakan agar `kirara` menerima request ketika seluruh worker utama tidak tersedia.
+
+Selain itu, konfigurasi berikut digunakan untuk mengizinkan Nginx mencoba upstream lain ketika terjadi kegagalan:
+
+```nginx
+proxy_next_upstream error timeout invalid_header http_500 http_502 http_503 http_504;
+proxy_next_upstream_tries 3;
+proxy_next_upstream_timeout 8s;
 ```
+
+Konfigurasi tersebut memungkinkan request diteruskan ke worker cadangan ketika worker utama gagal memberikan respons.
+
+### Verifikasi
+
+#### 1. Verifikasi Konfigurasi Failover pada `geto`
+
+Pengujian dilakukan untuk memastikan konfigurasi upstream dan mekanisme failover telah diterapkan.
+
+```bash
+nginx -t && grep -A5 'upstream api_cluster' /etc/nginx/conf.d/soal15.conf && grep 'proxy_next_upstream' /etc/nginx/conf.d/soal15.conf
+```
+
+Hasil yang diharapkan adalah konfigurasi Nginx valid, `nanami` dan `todo` memiliki parameter `max_fails=2` serta `fail_timeout=5s`, dan `kirara` terdaftar sebagai server `backup`.
+
+<img width="959" height="210" alt="image" src="https://github.com/user-attachments/assets/6ee5613f-45d3-4526-88dd-b61fbbac288d" />
+
+#### 2. Verifikasi API Worker Cadangan pada `kirara`
+
+Pemeriksaan dilakukan untuk memastikan layanan Nginx dan aplikasi PHP pada `kirara` telah siap menerima request.
+
+```bash
+nginx -t && service nginx status && php -l /var/www/jarkom14/index.php
+```
+
+Hasil yang diharapkan menunjukkan konfigurasi Nginx valid, layanan Nginx aktif, serta file PHP tidak memiliki kesalahan sintaks.
+
+<img width="616" height="105" alt="image" src="https://github.com/user-attachments/assets/25370dd8-1fa3-4886-827f-dc9ef88eb602" />
+
+#### 3. Simulasi Gangguan pada `nanami` dan `todo`
+
+Untuk menguji failover, layanan Nginx pada kedua API worker utama dihentikan sementara.
+
+Pada `nanami`:
+
+```bash
+service nginx stop
+```
+
+Pada `todo`:
+
+```bash
+service nginx stop
+```
+
+Dengan menghentikan kedua layanan tersebut, request API tidak dapat diproses oleh worker utama sehingga Load Balancer perlu mengalihkan request menuju `kirara`.
+
+#### 4. Verifikasi Failover melalui `itadori`
+
+Setelah kedua layanan utama dihentikan, pengujian dilakukan dari `itadori` dengan mengirimkan request ke endpoint `/api` melalui `gojo`.
+
+```bash
+curl -sSi --resolve jujutsu.k46.com:80:192.234.1.4 http://jujutsu.k46.com/api/soal18-failover
+```
+
+Hasil yang diharapkan berupa respons `HTTP 200 OK` dengan JSON yang menunjukkan:
+
+```json
+{
+  "ok": true,
+  "worker": "kirara"
+}
+```
+
+Contoh tersebut hanya menampilkan field utama; respons sebenarnya juga dapat memuat `client_ip` dan `log_id`.
+
+Apabila request menghasilkan respons `HTTP 200` dengan worker `kirara`, hal tersebut membuktikan bahwa mekanisme failover berhasil mengalihkan request ke server cadangan tanpa menghasilkan error `502 Bad Gateway`.
+
+<img width="761" height="215" alt="image" src="https://github.com/user-attachments/assets/9997d501-eb1a-47e5-b502-0e046390e312" />
+
+#### 5. Pemulihan Worker Utama
+
+Setelah pengujian selesai, layanan Nginx pada `nanami` dan `todo` diaktifkan kembali.
+
+Pada masing-masing node:
+
+```bash
+service nginx start
+service nginx status
+```
+
+Pengujian dapat diulang dari `itadori` untuk memastikan request kembali dapat dilayani oleh worker utama.
+
+```bash
+curl -s --resolve jujutsu.k46.com:80:192.234.1.4 http://jujutsu.k46.com/api/soal18-recovery
+```
+
+Hasil yang diharapkan adalah respons API valid dari `nanami` atau `todo` setelah layanan pulih.
+
+<img width="691" height="68" alt="image" src="https://github.com/user-attachments/assets/a27aa2c2-4ead-45fe-bfae-d45c8cf38b05" />
+
+Keberhasilan Soal 18 dibuktikan apabila request API tetap menghasilkan respons yang valid dari `kirara` saat kedua worker utama dihentikan, kemudian kembali dilayani oleh worker utama setelah layanan dipulihkan.
+
 
 ## Soal 19
 
+### Soal
+
+gojo bertugas mengoptimalkan layanan web sekaligus membatasi request berlebihan. Konfigurasikan Nginx Proxy Caching untuk halaman web frontend dengan masa berlaku cache 10 menit dan tambahkan header X-Cache-Status. Terapkan rate limiting pada path /api dengan batas 10 request per detik per IP klien. Buktikan bahwa request ke halaman web yang memenuhi syarat cache menghasilkan status MISS pada akses awal dan HIT pada akses berikutnya. Uji rate limiting secara terpisah dengan mengirimkan request beruntun ke /api, kemudian catat status respons yang dihasilkan ketika batas terlampaui.
+
+### Jawaban dan Penjelasan
+
+#### Konfigurasi `gojo`
+
+Pada soal ini, node `gojo` dikonfigurasi menggunakan Nginx untuk menerapkan Proxy Caching pada halaman frontend dan Rate Limiting pada endpoint API. Proxy Caching digunakan untuk menyimpan respons halaman web selama 10 menit, sedangkan Rate Limiting digunakan untuk membatasi request API maksimal 10 request per detik per IP client.
+
+Pertama, dilakukan konfigurasi cache dan rate limit melalui file `/etc/nginx/conf.d/00-soal19.conf`.
+
+```nginx
+proxy_cache_path /var/cache/nginx/soal19 levels=1:2 keys_zone=frontend_cache:10m max_size=64m inactive=10m use_temp_path=off;
+
+limit_req_zone $binary_remote_addr zone=api_limit:10m rate=10r/s;
 ```
-gojo bertugas mengoptimalkan layanan web sekaligus membatasi request
-berlebihan. Konfigurasikan Nginx Proxy Caching untuk halaman web
-frontend dengan masa berlaku cache 10 menit dan tambahkan header
-X-Cache-Status. Terapkan rate limiting pada path /api dengan batas 10
-request per detik per IP klien. Buktikan bahwa request ke halaman web
-yang memenuhi syarat cache menghasilkan status MISS pada akses awal dan
-HIT pada akses berikutnya. Uji rate limiting secara terpisah dengan
-mengirimkan request beruntun ke /api, kemudian catat status respons yang
-dihasilkan ketika batas terlampaui.
+
+Directive `proxy_cache_path` digunakan untuk menentukan lokasi penyimpanan cache, sedangkan `limit_req_zone` digunakan untuk mengatur batas request berdasarkan IP client.
+
+Selanjutnya, pada file `/etc/nginx/conf.d/soal16.conf`, konfigurasi caching diterapkan pada halaman frontend.
+
+```nginx
+location / {
+    proxy_pass http://frontend_cluster;
+    proxy_cache frontend_cache;
+    proxy_cache_key "$scheme|$host|$request_uri";
+    proxy_cache_valid 200 10m;
+    proxy_cache_lock on;
+
+    add_header X-Cache-Status $upstream_cache_status always;
+    add_header X-Gojo-Route frontend always;
+}
 ```
+
+Konfigurasi `proxy_cache_valid 200 10m` digunakan untuk menyimpan respons HTTP 200 selama 10 menit. Header `X-Cache-Status` menunjukkan apakah respons diambil dari cache atau langsung dari upstream.
+
+Sementara itu, pengaturan Rate Limiting untuk path `/api` disimpan pada file `/etc/nginx/snippets/soal19-api.conf`.
+
+```nginx
+limit_req zone=api_limit;
+limit_req_status 429;
+limit_req_log_level notice;
+
+proxy_cache off;
+proxy_pass http://192.234.4.2:80;
+
+add_header X-Rate-Limit-Status $limit_req_status always;
+```
+
+Directive `limit_req` menerapkan batas request sesuai zona `api_limit`, sedangkan `limit_req_status 429` mengatur respons ketika request ditolak karena melewati batas yang ditentukan.
+
+### Verifikasi
+
+#### 1. Verifikasi Konfigurasi pada `gojo`
+
+Pengujian dilakukan untuk memastikan konfigurasi Nginx valid serta pengaturan Proxy Caching dan Rate Limiting telah diterapkan.
+
+```bash
+nginx -t && grep -E 'proxy_cache_valid|X-Cache-Status' /etc/nginx/conf.d/soal16.conf && grep 'rate=10r/s' /etc/nginx/conf.d/00-soal19.conf && grep 'limit_req_status' /etc/nginx/snippets/soal19-api.conf
+```
+
+Hasil yang diharapkan menunjukkan konfigurasi Nginx valid, cache berlaku selama 10 menit, rate limit sebesar 10 request per detik, serta status penolakan HTTP 429.
+
+<img width="931" height="212" alt="image" src="https://github.com/user-attachments/assets/3749f251-ef2f-4a3a-8957-ac162c277181" />
+
+#### 2. Verifikasi Proxy Caching melalui `itadori`
+
+Pengujian dilakukan dari `itadori` dengan mengakses halaman frontend sebanyak dua kali menggunakan URL yang sama.
+
+```bash
+URL="http://jujutsu.k46.com/?soal19=$(date +%s)"
+
+curl -s -D - -o /dev/null --resolve jujutsu.k46.com:80:192.234.1.4 "$URL" | grep -Ei 'HTTP/|X-Cache-Status'
+
+curl -s -D - -o /dev/null --resolve jujutsu.k46.com:80:192.234.1.4 "$URL" | grep -Ei 'HTTP/|X-Cache-Status'
+```
+
+Hasil yang diharapkan adalah request pertama menghasilkan `X-Cache-Status: MISS`, sedangkan request kedua menghasilkan `X-Cache-Status: HIT`.
+
+Status `MISS` menunjukkan respons diperoleh dari frontend worker dan disimpan ke cache. Sementara itu, `HIT` menunjukkan respons berikutnya dilayani menggunakan data cache yang sudah tersedia.
+
+<img width="724" height="190" alt="image" src="https://github.com/user-attachments/assets/a7103638-ff17-417d-9682-6fed4ef9b151" />
+
+#### 3. Verifikasi Rate Limiting melalui `itadori`
+
+Pengujian dilakukan dengan mengirimkan 30 request API secara bersamaan untuk melihat respons ketika batas request terlampaui.
+
+```bash
+for i in $(seq 1 30); do
+  curl -s --resolve jujutsu.k46.com:80:192.234.1.4 -o /dev/null -w "Request $i: HTTP %{http_code}\n" "http://jujutsu.k46.com/api/uji19-$i" &
+done
+wait
+```
+
+Hasil yang diharapkan adalah sebagian request menghasilkan `HTTP 200 OK`, sedangkan request yang ditolak oleh Rate Limiting menghasilkan `HTTP 429 Too Many Requests`.
+
+Status `200` menunjukkan request berhasil diproses oleh API, sedangkan `429` menunjukkan bahwa Nginx telah membatasi request berlebihan sesuai kebijakan yang diterapkan.
+
+<img width="935" height="156" alt="image" src="https://github.com/user-attachments/assets/a3551782-2e04-4745-83a5-70ae0380ac9b" />
+
+Berdasarkan pengujian tersebut, keberhasilan Soal 19 dapat dibuktikan apabila halaman frontend menghasilkan status cache `MISS` kemudian `HIT`, serta endpoint API menghasilkan respons `429` ketika batas request terlampaui. Dengan demikian, konfigurasi Proxy Caching dan Rate Limiting pada `gojo` dapat dinyatakan berjalan sesuai ketentuan.
+
 
 ## Soal 20
 
+### Soal
+
+Sebelum Curtain di Shibuya resmi dibuka, Kusakabe memimpin audit untuk menguji kapasitas layanan. Dari terminal kusakabe, jalankan benchmark menggunakan Apache Benchmark dengan parameter -n 600 -c 30 menuju http://jujutsu.<xxxx>.com/. Catat Requests per Second (RPS), latensi, dan jumlah request yang gagal. Lakukan pengujian tambahan pada endpoint /api untuk mengamati efek rate limiting. Bandingkan hasil pengujian baseline dengan hasil ketika rate limiting aktif, serta gunakan access log gojo untuk membedakan kegagalan aplikasi, koneksi, dan request yang ditolak oleh kebijakan rate limit.
+
+### Jawaban dan Penjelasan
+
+Pada soal ini, dilakukan pengujian performa menggunakan Apache Benchmark dari node `kusakabe` untuk mengetahui kemampuan server dalam menangani request secara bersamaan.
+
+Pengujian dilakukan terhadap halaman frontend dan endpoint API melalui reverse proxy `gojo`. Parameter `-n 600` digunakan untuk mengirimkan 600 request, sedangkan `-c 30` menentukan jumlah 30 request yang dijalankan secara bersamaan.
+
+Pengujian API dilakukan dalam dua kondisi, yaitu **baseline** ketika rate limiting dinonaktifkan sementara melalui mode dry run, dan kondisi **rate limiting aktif** dengan batas 10 request per detik per IP client.
+
+Hasil pengujian dibandingkan berdasarkan Requests per Second (RPS), latensi, jumlah request gagal, dan respons HTTP yang dihasilkan.
+
+### Verifikasi
+
+#### 1. Verifikasi Benchmark Frontend pada `kusakabe`
+
+Sebelum pengujian, dilakukan satu request untuk mengisi cache frontend.
+
+```bash
+curl -s -o /dev/null http://jujutsu.k46.com/
 ```
-Sebelum Curtain di Shibuya resmi dibuka, Kusakabe memimpin audit untuk
-menguji kapasitas layanan. Dari terminal kusakabe, jalankan benchmark
-menggunakan Apache Benchmark dengan parameter -n 600 -c 30 menuju
-http://jujutsu.<xxxx>.com/. Catat Requests per Second (RPS), latensi,
-dan jumlah request yang gagal. Lakukan pengujian tambahan pada endpoint
-/api untuk mengamati efek rate limiting. Bandingkan hasil pengujian
-baseline dengan hasil ketika rate limiting aktif, serta gunakan access
-log gojo untuk membedakan kegagalan aplikasi, koneksi, dan request yang
-ditolak oleh kebijakan rate limit.
+
+Selanjutnya, dilakukan benchmark menggunakan Apache Benchmark.
+
+```bash
+ab -n 600 -c 30 -l -s 5 -r -H 'X-Test-Run: demo20-k46-web' http://jujutsu.k46.com/ | tee /root/no20-web.txt
 ```
+
+Pengujian ini digunakan untuk mengetahui nilai Requests per Second, Time per Request, serta jumlah request yang berhasil maupun gagal.
+
+Hasil yang diharapkan adalah 600 request selesai, dengan jumlah failed requests dan non-2xx responses sebanyak 0.
+
+#### 2. Verifikasi Benchmark API Baseline
+
+Pada node `gojo`, rate limiting diubah sementara ke mode dry run agar request tetap diproses tanpa penolakan oleh pembatas request.
+
+```bash
+printf 'limit_req_dry_run on;\n' > /etc/nginx/snippets/soal19-enforcement.conf && nginx -t && service nginx reload
+```
+
+Kemudian dilakukan benchmark pada endpoint API dari `kusakabe`.
+
+```bash
+ab -n 600 -c 30 -l -s 5 -r -H 'X-Test-Run: demo20-k46-baseline' http://jujutsu.k46.com/api/soal20-demo20-k46 | tee /root/no20-baseline.txt
+```
+
+Pengujian ini digunakan untuk mendapatkan performa API sebelum pembatasan request diberlakukan. Hasil benchmark dicatat sebagai pembanding terhadap kondisi rate limiting aktif.
+
+#### 3. Verifikasi Benchmark dengan Rate Limiting Aktif
+
+Setelah pengujian baseline selesai, rate limiting pada `gojo` diaktifkan kembali.
+
+```bash
+printf 'limit_req_dry_run off;\n' > /etc/nginx/snippets/soal19-enforcement.conf && nginx -t && service nginx reload
+```
+
+Kemudian, benchmark API dijalankan kembali dari `kusakabe` dengan jumlah dan concurrency yang sama.
+
+```bash
+ab -n 600 -c 30 -l -s 5 -r -H 'X-Test-Run: demo20-k46-limited' http://jujutsu.k46.com/api/soal20-demo20-k46 | tee /root/no20-limited.txt
+```
+
+Pada kondisi ini, request yang melebihi kebijakan rate limiting dapat menghasilkan status `HTTP 429 Too Many Requests`.
+
+Untuk membandingkan hasil ketiga benchmark, digunakan perintah berikut pada `kusakabe`.
+
+```bash
+grep -E 'Complete requests:|Failed requests:|Non-2xx responses:|Requests per second:|Time per request:|95%' /root/no20-*.txt
+```
+
+Perbandingan tersebut digunakan untuk menganalisis perubahan RPS, latensi, dan jumlah respons non-2xx ketika rate limiting aktif.
+
+#### 4. Verifikasi Access Log pada `gojo`
+
+Pengujian terakhir dilakukan dengan memeriksa access log Nginx pada `gojo` untuk mengetahui penyebab request yang ditolak atau mengalami kegagalan.
+
+```bash
+grep '"run":"demo20-k46-limited"' /var/log/nginx/soal19-access.log | grep '"status":429' | head -n 5
+```
+
+Log tersebut digunakan untuk memeriksa apakah request menghasilkan HTTP 429 dengan status rate limiting `REJECTED`.
+
+Untuk memeriksa kemungkinan error pada aplikasi atau upstream, digunakan perintah:
+
+```bash
+grep '"run":"demo20-k46-' /var/log/nginx/soal19-access.log | grep -E '"status":5[0-9][0-9]' | head -n 5
+```
+
+Respons HTTP 429 dengan status `REJECTED` menunjukkan penolakan akibat rate limiting. Respons HTTP 5xx menunjukkan kegagalan server atau upstream, sedangkan kegagalan koneksi dianalisis melalui hasil Apache Benchmark dan error log karena tidak semua kegagalan koneksi tercatat pada access log.
+
+
