@@ -960,45 +960,295 @@ $ mysql -e "SELECT * FROM db_shibuya_K46.request_logs ORDER BY id DESC LIMIT 3;"
 ```
 
 ## Soal 14
+Para penyihir lapangan bersiaga di Data Center sebagai pekerja backend untuk memproses aplikasi. Pasang Nginx dan PHP-FPM pada **maki** dan **panda** untuk menyajikan web frontend yang menampilkan hostname masing-masing. Pada **nanami**, **todo**, dan **kirara**, siapkan layanan API yang mencatat log request ke database **yaga**. Konfigurasikan virtual host agar worker merespons domain layanan yang ditentukan. Batasi akses langsung dari klien ke worker, web worker hanya menerima trafik melalui jalur proxy web yang ditentukan, sedangkan worker API hanya menerima trafik melalui **geto**. Uji bahwa akses langsung dari klien ditolak, sementara akses melalui reverse proxy tetap berhasil.
 
+### Jawaban dan Penjelasan
+
+Pada soal ini, dilakukan konfigurasi web frontend dan API menggunakan Nginx serta PHP-FPM. Node `maki` dan `panda` berperan sebagai frontend worker, sedangkan `nanami`, `todo`, dan `kirara` berperan sebagai API worker yang mencatat request ke database `yaga`.
+
+#### 1. Konfigurasi Frontend Worker (`maki` dan `panda`)
+
+Kedua node dikonfigurasi untuk menampilkan halaman web yang berisi hostname masing-masing. Akses worker dibatasi agar hanya dapat diterima dari `gojo` sebagai proxy web.
+
+Berikut bagian utama konfigurasi Nginx:
+
+```nginx
+server {
+    listen 80 default_server;
+    server_name jujutsu.k46.com www.jujutsu.k46.com
+                frontend.k46.com api.k46.com;
+
+    root /var/www/jarkom14;
+    index index.php;
+
+    allow 192.234.1.4;
+    deny all;
+
+    location / {
+        try_files $uri /index.php$is_args$args;
+    }
+}
 ```
-Para penyihir lapangan bersiaga di Data Center sebagai pekerja backend
-untuk memproses aplikasi. Pasang Nginx dan PHP-FPM pada maki dan panda
-untuk menyajikan web frontend yang menampilkan hostname masing-masing.
-Pada nanami, todo, dan kirara, siapkan layanan API yang mencatat log
-request ke database yaga. Konfigurasikan virtual host agar worker
-merespons domain layanan yang ditentukan. Batasi akses langsung dari
-klien ke worker, web worker hanya menerima trafik melalui jalur proxy
-web yang ditentukan, sedangkan worker API hanya menerima trafik melalui
-geto. Uji bahwa akses langsung dari klien ditolak, sementara akses
-melalui reverse proxy tetap berhasil.
+
+Directive `allow` mengizinkan akses dari `gojo` (`192.234.1.4`), sedangkan `deny all` menolak akses langsung dari alamat lainnya. Halaman frontend menggunakan PHP untuk menampilkan hostname server.
+
+#### 2. Konfigurasi API Worker (`nanami`, `todo`, dan `kirara`)
+
+Ketiga API worker dikonfigurasi menggunakan Nginx dan PHP-FPM untuk memproses request API. Setiap request yang berhasil diproses akan dicatat ke tabel `request_logs` pada database `db_shibuya_K46` di `yaga`.
+
+Pembatasan akses dilakukan melalui konfigurasi:
+
+```nginx
+allow 192.234.4.2;
+deny all;
 ```
+
+Alamat `192.234.4.2` merupakan IP `geto`. Dengan demikian, API worker hanya menerima request yang berasal dari proxy tersebut.
+
+Respons API berupa JSON yang memuat status request, hostname worker, alamat client, dan ID log.
+
+#### 3. Konfigurasi Jalur Reverse Proxy
+
+Untuk mendukung pengujian Soal 14, digunakan jalur reverse proxy sementara melalui `gojo` dan `geto` pada port `8080`.
+
+Pada `gojo`, request halaman utama diteruskan ke frontend worker `maki` dan `panda`, sedangkan request `/api` diteruskan ke `geto`.
+
+Selanjutnya, `geto` meneruskan request API ke `nanami`, `todo`, dan `kirara`.
+
+Konfigurasi tersebut memungkinkan client mengakses layanan melalui proxy tanpa harus terhubung langsung ke worker.
+
+### Verifikasi
+
+#### 1. Verifikasi Frontend Worker melalui `gojo`
+
+Pengujian dilakukan dari `gojo` untuk memastikan frontend `maki` dan `panda` dapat diakses melalui domain layanan.
+
+```bash
+curl -i -H 'Host: jujutsu.k46.com' http://192.234.4.3/
+curl -i -H 'Host: jujutsu.k46.com' http://192.234.4.4/
+```
+
+Berdasarkan hasil pengujian, kedua frontend worker memberikan respons `HTTP 200 OK` dan menampilkan halaman web dengan hostname masing-masing, yaitu `maki` dan `panda`.
+
+<img width="701" height="315" alt="image" src="https://github.com/user-attachments/assets/dd065f22-b284-4777-8def-eac176ba9499" />
+
+#### 2. Verifikasi API Worker melalui `geto`
+
+Pengujian dilakukan dari `geto` dengan mengirimkan request ke ketiga API worker.
+
+```bash
+curl -i http://192.234.4.5/api/uji-nanami
+curl -i http://192.234.4.6/api/uji-todo
+curl -i http://192.234.4.7/api/uji-kirara
+```
+
+Berdasarkan hasil pengujian, ketiga API worker memberikan respons `HTTP 200 OK` dan JSON dengan nilai `"ok":true`. Respons juga menampilkan hostname worker serta `log_id` sebagai tanda bahwa pencatatan request berhasil dilakukan.
+
+<img width="604" height="427" alt="image" src="https://github.com/user-attachments/assets/54a3883b-ee9f-4084-9888-bdf1c26a6a40" />
+
+#### 3. Verifikasi Pencatatan Log pada Database `yaga`
+
+Pemeriksaan dilakukan pada `yaga` untuk memastikan request API tercatat pada tabel `request_logs`.
+
+```bash
+mysql -e "SELECT id, client_ip, worker, method, path FROM db_shibuya_K46.request_logs ORDER BY id DESC LIMIT 15;"
+```
+
+Pengujian ini bertujuan untuk memastikan bahwa database menyimpan informasi request, termasuk alamat client, nama worker, metode HTTP, dan path yang diakses. Hasil yang diharapkan adalah munculnya record dari worker `nanami`, `todo`, dan `kirara`.
+
+<img width="869" height="296" alt="image" src="https://github.com/user-attachments/assets/96ea6f0a-847c-4d71-9f20-6be227c2bf24" />
+
+#### 4. Verifikasi Pembatasan Akses melalui `itadori`
+
+Pengujian dilakukan dari `itadori` untuk membandingkan akses langsung ke worker dengan akses melalui reverse proxy.
+
+Pengujian akses langsung:
+
+```bash
+curl -I http://192.234.4.3/
+curl -I http://192.234.4.5/
+```
+
+Pengujian akses melalui reverse proxy:
+
+```bash
+curl -i --resolve jujutsu.k46.com:8080:192.234.1.4 http://jujutsu.k46.com:8080/
+
+curl -i --resolve jujutsu.k46.com:8080:192.234.1.4 http://jujutsu.k46.com:8080/api/uji-14
+```
+
+Berdasarkan hasil pengujian sebelumnya, akses langsung dari client menuju worker menghasilkan `HTTP 403 Forbidden`, sedangkan akses melalui reverse proxy menghasilkan `HTTP 200 OK`.
+
+Hal tersebut membuktikan bahwa pembatasan akses telah diterapkan dan layanan tetap dapat diakses melalui jalur proxy yang ditentukan.
+
+<img width="924" height="499" alt="image" src="https://github.com/user-attachments/assets/af77fbfb-21ee-4946-9a7a-3d9acbb89cc3" />
+
+Berdasarkan pengujian frontend, API, dan pembatasan akses, konfigurasi Soal 14 telah menunjukkan hasil yang sesuai. Pemeriksaan database secara langsung pada `yaga` digunakan sebagai bukti tambahan bahwa log request tersimpan dengan benar.
+
 
 ## Soal 15
+Geto bertugas mengendalikan pembagian beban request API di internal Data Center agar server tidak tumbang bersamaan. Konfigurasikan Nginx pada geto sebagai Load Balancer internal dengan upstream api_cluster yang mengarahkan trafik ke nanami dan todo. Terapkan algoritma Weighted Round Robin dengan bobot 3:1, di mana nanami menerima porsi beban tiga kali lebih banyak daripada todo. Buktikan distribusi beban ini dengan melakukan loop request berulang kali ke geto dari jaringan lokal Data Center dan periksa rasio responnya.
 
+### Jawaban dan Penjelasan
+
+#### Konfigurasi `geto`
+
+Pada soal ini, node `geto` dikonfigurasi sebagai Load Balancer menggunakan Nginx untuk mendistribusikan request API ke `nanami` dan `todo` dengan algoritma Weighted Round Robin.
+
+Konfigurasi dilakukan pada file `/etc/nginx/conf.d/soal15.conf` dengan membuat upstream `api_cluster`.
+
+```nginx
+upstream api_cluster {
+    zone api_cluster 64k;
+    server 192.234.4.5:80 weight=3 max_fails=2 fail_timeout=5s;
+    server 192.234.4.6:80 weight=1 max_fails=2 fail_timeout=5s;
+    server 192.234.4.7:80 backup;
+}
 ```
-Geto bertugas mengendalikan pembagian beban request API di internal Data
-Center agar server tidak tumbang bersamaan. Konfigurasikan Nginx pada
-geto sebagai Load Balancer internal dengan upstream api_cluster yang
-mengarahkan trafik ke nanami dan todo. Terapkan algoritma Weighted Round
-Robin dengan bobot 3:1, di mana nanami menerima porsi beban tiga kali
-lebih banyak daripada todo. Buktikan distribusi beban ini dengan
-melakukan loop request berulang kali ke geto dari jaringan lokal Data
-Center dan periksa rasio responnya.
+
+Konfigurasi `weight=3` pada `nanami` dan `weight=1` pada `todo` digunakan untuk membagi request dengan rasio 3:1. Artinya, dalam kondisi kedua worker aktif, sekitar 75% request akan diteruskan ke `nanami` dan 25% ke `todo`.
+
+Directive `zone` digunakan untuk menyimpan status upstream yang dapat dibagikan antarproses Nginx. Pada konfigurasi yang telah berjalan juga terdapat `max_fails`, `fail_timeout`, dan `kirara` sebagai backup, yang berkaitan dengan pengaturan failover pada Soal 18.
+
+### Verifikasi
+
+#### 1. Verifikasi Konfigurasi Load Balancer pada `geto`
+
+Pengujian dilakukan untuk memastikan konfigurasi Nginx valid dan pembagian bobot pada upstream `api_cluster` sudah sesuai.
+
+```bash
+nginx -t && grep -A4 'upstream api_cluster' /etc/nginx/conf.d/soal15.conf
 ```
+
+Berdasarkan hasil pengujian, konfigurasi Nginx berhasil divalidasi dengan pesan `syntax is ok` dan `test is successful`. Konfigurasi upstream juga menunjukkan bahwa `nanami` memiliki bobot 3, sedangkan `todo` memiliki bobot 1.
+
+<img width="601" height="125" alt="image" src="https://github.com/user-attachments/assets/b679fb42-90d8-4c62-98eb-0043ae636b19" />
+
+#### 2. Verifikasi Distribusi Request pada `maki`
+
+Pengujian dilakukan dari node `maki` yang berada di jaringan Data Center dengan mengirimkan 40 request secara berulang ke Load Balancer `geto`.
+
+```bash
+for i in $(seq 1 40); do
+  curl -s http://192.234.4.2/api/uji-$i | grep -o '"worker":"[^"]*"'
+done | sort | uniq -c
+```
+
+Berdasarkan hasil pengujian, diperoleh distribusi request sebagai berikut:
+
+<img width="470" height="103" alt="image" src="https://github.com/user-attachments/assets/0202dcb1-d750-435d-979f-89883f040546" />
+
+
+Dari total 40 request, `nanami` menerima 30 request (75%), sedangkan `todo` menerima 10 request (25%). Hasil tersebut menunjukkan bahwa distribusi beban telah sesuai dengan rasio Weighted Round Robin sebesar 3:1.
+Berdasarkan hasil pengujian, Load Balancer pada `geto` berhasil mendistribusikan request API ke `nanami` dan `todo` sesuai bobot yang ditentukan. Dengan demikian, penerapan algoritma Weighted Round Robin 3:1 telah berjalan sesuai ketentuan soal.
+
 
 ## Soal 16
 
+### Soal
+
+Gojo berdiri di perbatasan DMZ sebagai gerbang publik tunggal bagi seluruh client dari luar maupun dalam. Konfigurasikan Nginx pada gojo untuk melayani domain jujutsu.<xxxx>.com dan www.jujutsu.<xxxx>.com menggunakan metode Path-Based Routing. Atur agar request root (/) diteruskan secara Round Robin ke worker frontend (maki dan panda), sedangkan request ke path /api diteruskan langsung ke geto. Uji dari client Divisi A atau B bahwa akses ke web utama dibalas oleh Maki/Panda, sedangkan akses ke /api diteruskan dan dijawab oleh Nanami/Todo.
+
+### Jawaban dan Penjelasan
+
+#### Konfigurasi `gojo`
+
+Pada soal ini, node `gojo` dikonfigurasi sebagai reverse proxy menggunakan Nginx dengan metode Path-Based Routing. Request menuju halaman utama (`/`) diteruskan secara Round Robin ke `maki` dan `panda`, sedangkan request menuju `/api` diteruskan ke `geto` untuk diproses oleh API worker.
+
+Konfigurasi dilakukan pada file `/etc/nginx/conf.d/soal16.conf`.
+
+Pertama, dibuat upstream `frontend_cluster` untuk mendistribusikan request ke kedua frontend worker.
+
+```nginx
+upstream frontend_cluster {
+    zone frontend_cluster 64k;
+    server 192.234.4.3:80;
+    server 192.234.4.4:80;
+}
 ```
-Gojo berdiri di perbatasan DMZ sebagai gerbang publik tunggal bagi
-seluruh client dari luar maupun dalam. Konfigurasikan Nginx pada gojo
-untuk melayani domain jujutsu.<xxxx>.com dan www.jujutsu.<xxxx>.com
-menggunakan metode Path-Based Routing. Atur agar request root (/)
-diteruskan secara Round Robin ke worker frontend (maki dan panda),
-sedangkan request ke path /api diteruskan langsung ke geto. Uji dari
-client Divisi A atau B bahwa akses ke web utama dibalas oleh Maki/Panda,
-sedangkan akses ke /api diteruskan dan dijawab oleh Nanami/Todo.
+
+Kedua server memiliki bobot yang sama sehingga Nginx menggunakan algoritma Round Robin untuk membagi request secara bergantian.
+
+Selanjutnya, dilakukan konfigurasi virtual host dan Path-Based Routing.
+
+```nginx
+server {
+    listen 80 default_server;
+    server_name jujutsu.k46.com www.jujutsu.k46.com;
+
+    location = /api {
+        proxy_pass http://192.234.4.2:80;
+    }
+
+    location ^~ /api/ {
+        proxy_pass http://192.234.4.2:80;
+    }
+
+    location / {
+        proxy_pass http://frontend_cluster;
+    }
+}
 ```
+
+Konfigurasi `location /` digunakan untuk meneruskan request halaman web ke frontend worker. Sementara itu, `location = /api` dan `location ^~ /api/` digunakan untuk meneruskan request API ke `geto` (`192.234.4.2`) tanpa mengubah path request.
+
+### Verifikasi
+
+#### 1. Verifikasi Konfigurasi pada `gojo`
+
+Pengujian dilakukan untuk memastikan konfigurasi Nginx valid dan Path-Based Routing telah diterapkan.
+
+```bash
+nginx -t && grep -E 'server_name|upstream frontend_cluster|server 192.234.4.[34]:80|location|proxy_pass' /etc/nginx/conf.d/soal16.conf
+```
+
+Berdasarkan hasil pengujian, konfigurasi Nginx berhasil divalidasi dengan pesan `syntax is ok` dan `test is successful`. Konfigurasi juga menunjukkan upstream `frontend_cluster` yang berisi `maki` dan `panda`, serta pemisahan routing berdasarkan path.
+
+<img width="933" height="181" alt="image" src="https://github.com/user-attachments/assets/54d683f8-e131-4f96-b893-fd05ef53f351" />
+
+#### 2. Verifikasi Frontend melalui `itadori`
+
+Pengujian dilakukan dari `itadori` dengan mengirimkan request ke halaman utama melalui kedua domain layanan.
+
+```bash
+for domain in jujutsu.k46.com www.jujutsu.k46.com; do
+  for i in 1 2 3 4; do
+    curl -sSi --resolve "$domain:80:192.234.1.4" "http://$domain/" | grep -Ei '^HTTP/|^X-Gojo-Route:|Frontend worker:'
+  done
+done
+```
+
+Berdasarkan hasil pengujian, seluruh request menghasilkan `HTTP 200 OK` dengan header `X-Gojo-Route: frontend`. Dari 8 request yang dikirimkan, `maki` dan `panda` masing-masing merespons 4 kali. Hasil tersebut menunjukkan bahwa distribusi Round Robin berjalan dengan rasio 1:1.
+
+<img width="909" height="419" alt="image" src="https://github.com/user-attachments/assets/cf588f1a-f4ae-4907-8361-93b33f6e1bc5" />
+
+#### 3. Verifikasi API melalui `itadori`
+
+Pengujian dilakukan untuk memastikan request `/api` diteruskan oleh `gojo` menuju `geto` dan diproses oleh API worker.
+
+```bash
+curl -sSi --resolve jujutsu.k46.com:80:192.234.1.4 http://jujutsu.k46.com/api/uji-soal16
+```
+
+Pengujian juga dilakukan pada domain `www.jujutsu.k46.com`.
+
+```bash
+curl -sSi --resolve www.jujutsu.k46.com:80:192.234.1.4 http://www.jujutsu.k46.com/api/uji-soal16
+```
+
+Berdasarkan hasil pengujian yang berhasil, diperoleh respons `HTTP 200 OK` dengan header:
+
+```text
+X-Gojo-Route: api
+X-Gojo-Upstream: 192.234.4.2:80
+```
+
+Respons JSON juga menampilkan `"ok":true` dan `"worker":"nanami"`. Hal ini membuktikan bahwa request API berhasil diteruskan dari `gojo` melalui `geto` dan diproses oleh API worker.
+
+<img width="820" height="397" alt="image" src="https://github.com/user-attachments/assets/489a5d25-9562-428b-96da-6d99b1c2fec5" />
+
+Berdasarkan hasil pengujian, konfigurasi Path-Based Routing pada `gojo` telah berjalan sesuai ketentuan. Request halaman utama berhasil didistribusikan ke `maki` dan `panda` menggunakan Round Robin, sedangkan request `/api` berhasil diteruskan melalui `geto` menuju API worker.
+
 
 ## Soal 17
 
